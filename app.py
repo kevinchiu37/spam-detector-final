@@ -80,7 +80,6 @@ def analyze_all():
             if not OCR_API_KEY:
                 return jsonify({'error': 'OCR_API_KEY_MISSING'}), 500
 
-            # (OCR 相關程式碼保持不變)
             ext = os.path.splitext(image_file.filename)[1].lower() or '.jpg'
             mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.bmp': 'image/bmp', '.gif': 'image/gif'}
             mime = mime_types.get(ext, 'image/jpeg')
@@ -105,7 +104,7 @@ def analyze_all():
         if image_file and len(extracted_text) < 10:
             return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
-        # 情況二：沒有圖片，也沒有手動輸入任何文字
+        # 情況二：沒有任何有效的文字來源
         if not full_text:
             return jsonify({'error': '未提供有效文字'}), 400
         
