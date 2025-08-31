@@ -110,21 +110,18 @@ def analyze_all():
             
             if result.get('ParsedResults'):
                  extracted_text = result['ParsedResults'][0].get('ParsedText', '')
-        
-        # --- 修改: 將驗證邏輯移至正確的位置 ---
-        # 1. 先合併所有文字
+
+        # --- **修正後的驗證邏輯 (已移出 if image_file 區塊)** ---
         full_text = f"{extracted_text.strip()} {text_input}".strip()
 
-        # 2. 如果有上傳圖片，優先檢查圖片辨識品質
         if image_file and len(extracted_text.strip()) < 10:
             return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
-        # 3. 最後才檢查是否完全沒有任何文字
         if not full_text:
             return jsonify({'error': '未提供有效文字'}), 400
-        # --- 修改結束 ---
+        # --- **修正結束** ---
 
-        # --- 模型融合邏輯 ---
+        # --- 模型融合邏輯 (已移出 if image_file 區塊) ---
         sklearn_score = 0.0
         if sklearn_model and vectorizer:
             vec = vectorizer.transform([full_text])
@@ -148,3 +145,5 @@ def analyze_all():
     except Exception as e:
         print(f"❌ 分析時錯誤：{e}")
         return jsonify({'error': str(e)}), 500
+
+
