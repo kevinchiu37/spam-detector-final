@@ -19,7 +19,7 @@ if not OCR_API_KEY:
 app = Flask(__name__)
 CORS(app)
 
-# --- 修改: 載入所有模型 ---
+# --- 載入所有模型 ---
 # 傳統模型 (Scikit-learn)
 try:
     sklearn_model = joblib.load('spam_detector_model.pkl')
@@ -32,7 +32,6 @@ except Exception as e:
 
 # 新的 BERT 模型
 try:
-    # BERT 模型檔案所在的資料夾名稱
     BERT_MODEL_PATH = './bert_spam_model' 
     tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
     bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
@@ -43,24 +42,20 @@ except Exception as e:
     bert_model = None
 # ------------------------------------
 
-# --- 新增: 獨立的 BERT 預測函式 ---
+# --- 獨立的 BERT 預測函式 ---
 def predict_with_bert(text):
     if not tokenizer or not bert_model:
         return None, 0.0
 
     try:
-        # 1. 將文字進行 Tokenize (分詞)
         inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
         
-        # 2. 進行預測
-        with torch.no_grad(): # 在推論模式下不計算梯度，以節省資源
+        with torch.no_grad():
             outputs = bert_model(**inputs)
         
-        # 3. 取得預測結果
         logits = outputs.logits
         probabilities = torch.softmax(logits, dim=-1)
         
-        # 假設: 標籤 0 是 'ham', 標籤 1 是 'spam'
         spam_probability = probabilities[0][1].item()
         predicted_class_id = torch.argmax(logits, dim=-1).item()
         
@@ -108,45 +103,42 @@ def analyze_all():
                 data={'apikey': OCR_API_KEY, 'language': 'cht'}
             )
             result = ocr_response.json()
-            if not result.get('IsErroredOnProcessing'):
-                extracted_text = result['ParsedResults'][0].get('ParsedText', '')
-            else:
+            
+            if result.get('IsErroredOnProcessing'):
                 details = result.get('ErrorMessage') or result.get('ErrorDetails') or 'unknown'
                 return jsonify({'error': 'OCR_API_ERROR', 'details': details}), 500
+            
+            if result.get('ParsedResults'):
+                 extracted_text = result['ParsedResults'][0].get('ParsedText', '')
+        
+        # --- 修改: 將驗證邏輯移至正確的位置 ---
+        # 1. 先合併所有文字
+        full_text = f"{extracted_text.strip()} {text_input}".strip()
 
-                    # --- 修改: 調整檢查順序 ---
-            # 1. 先合併所有文字
-            full_text = f"{extracted_text.strip()} {text_input}".strip()
+        # 2. 如果有上傳圖片，優先檢查圖片辨識品質
+        if image_file and len(extracted_text.strip()) < 10:
+            return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
-            # 2. 如果有上傳圖片，優先檢查圖片辨識品質
-            if image_file and len(extracted_text.strip()) < 10:
-                return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
-
-            # 3. 如果連手動輸入的文字都沒有，才回傳「未提供有效文字」
-            if not full_text:
-                return jsonify({'error': '未提供有效文字'}), 400
-            # --- 修改結束 ---
+        # 3. 最後才檢查是否完全沒有任何文字
+        if not full_text:
+            return jsonify({'error': '未提供有效文字'}), 400
+        # --- 修改結束 ---
 
         # --- 模型融合邏輯 ---
-        # 1. 取得 Scikit-learn 模型的預測結果
         sklearn_score = 0.0
         if sklearn_model and vectorizer:
             vec = vectorizer.transform([full_text])
             sklearn_score = sklearn_model.predict_proba(vec)[0][1]
 
-        # 2. 取得 BERT 模型的預測結果
         bert_label, bert_score = predict_with_bert(full_text)
         
-        # 3. 結合分數 (你可以調整權重，這裡使用簡單平均法)
         total_score = (sklearn_score + bert_score) / 2
         
-        # 4. 根據最終分數決定標籤 (以 0.5 為分界)
         final_label = 'spam' if total_score >= 0.5 else 'ham'
         
         print(f"原始文字: {full_text[:50]}...")
         print(f"SK-Learn Score: {sklearn_score:.4f}, BERT Score: {bert_score:.4f}, Total Score: {total_score:.4f}")
-        # ----------------------
-
+        
         return jsonify({
             'final_label': final_label,
             'text': full_text,
