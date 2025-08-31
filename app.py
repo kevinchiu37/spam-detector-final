@@ -14,23 +14,21 @@ OCR_API_KEY = os.environ.get("OCR_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# --- 修改: 將模型變數初始化為 None ---
-# 我們不再在伺服器啟動時載入模型，而是在第一次請求時才載入
+# --- 模型變數初始化為 None (延遲載入) ---
 sklearn_model = None
 vectorizer = None
 tokenizer = None
 bert_model = None
-models_loaded = False # 新增一個旗標來判斷模型是否已載入
+models_loaded = False
 
-# --- 新增: 建立一個專門用來載入模型的函式 ---
+# --- 載入模型的函式 ---
 def load_models():
     global sklearn_model, vectorizer, tokenizer, bert_model, models_loaded
-    if models_loaded: # 如果已經載入過，就直接返回
+    if models_loaded:
         return
 
     print("🚀 偵測到首次請求，開始載入所有模型...")
     
-    # 載入傳統模型 (Scikit-learn)
     try:
         sklearn_model = joblib.load('spam_detector_model.pkl')
         vectorizer = joblib.load('vectorizer.pkl')
@@ -38,7 +36,6 @@ def load_models():
     except Exception as e:
         print(f"❌ 傳統 Scikit-learn 模型或向量器載入失敗：{e}")
 
-    # 載入新的 BERT 模型
     try:
         BERT_MODEL_PATH = './bert_spam_model' 
         tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
@@ -49,10 +46,8 @@ def load_models():
 
     models_loaded = True
     print("👍 所有模型載入完畢！")
-# --- 新增結束 ---
 
-
-# --- 獨立的 BERT 預測函式 (保持不變) ---
+# --- BERT 預測函式 ---
 def predict_with_bert(text):
     if not tokenizer or not bert_model:
         return "ham", 0.0
@@ -69,27 +64,26 @@ def predict_with_bert(text):
         print(f"❌ BERT 預測錯誤: {e}")
         return "ham", 0.0
 
-# --- 修改: `/analyze-all` API ---
+# --- **最終修正版的 analyze_all API** ---
 @app.route('/analyze-all', methods=['POST'])
 def analyze_all():
-    # --- **新增: 在處理請求的一開始，先確保模型已載入** ---
     if not models_loaded:
         load_models()
-    # --- 新增結束 ---
 
     try:
         image_file = request.files.get('image', None)
         text_input = request.form.get('text', '').strip()
         extracted_text = ''
 
+        # 步驟 1: 如果有圖片，先進行 OCR 處理
         if image_file:
             if not OCR_API_KEY:
                 return jsonify({'error': 'OCR_API_KEY_MISSING'}), 500
 
+            # (OCR 相關程式碼保持不變)
             ext = os.path.splitext(image_file.filename)[1].lower() or '.jpg'
             mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.bmp': 'image/bmp', '.gif': 'image/gif'}
             mime = mime_types.get(ext, 'image/jpeg')
-
             ocr_response = requests.post(
                 'https://api.ocr.space/parse/image',
                 files={'filename': ('image' + ext, image_file, mime)},
@@ -102,16 +96,20 @@ def analyze_all():
                 return jsonify({'error': 'OCR_API_ERROR', 'details': details}), 500
             
             if result.get('ParsedResults'):
-                 extracted_text = result['ParsedResults'][0].get('ParsedText', '')
+                 extracted_text = result['ParsedResults'][0].get('ParsedText', '').strip()
         
-        full_text = f"{extracted_text.strip()} {text_input}".strip()
+        # 步驟 2: 進行嚴謹的輸入驗證
+        full_text = f"{extracted_text} {text_input}".strip()
 
-        if image_file and len(extracted_text.strip()) < 10:
+        # 情況一：有圖片但辨識不出足夠的文字
+        if image_file and len(extracted_text) < 10:
             return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
+        # 情況二：沒有圖片，也沒有手動輸入任何文字
         if not full_text:
             return jsonify({'error': '未提供有效文字'}), 400
-
+        
+        # 步驟 3: 執行模型融合分析
         sklearn_score = 0.0
         if sklearn_model and vectorizer:
             vec = vectorizer.transform([full_text])
@@ -120,7 +118,6 @@ def analyze_all():
         bert_label, bert_score = predict_with_bert(full_text)
         
         total_score = (sklearn_score + bert_score) / 2
-        
         final_label = 'spam' if total_score >= 0.5 else 'ham'
         
         print(f"原始文字: {full_text[:50]}...")
@@ -133,8 +130,6 @@ def analyze_all():
         })
 
     except Exception as e:
-        print(f"❌ 分析時錯誤：{e}")
+        print(f"❌ 分析時發生未預期錯誤：{e}")
         return jsonify({'error': str(e)}), 500
-
-# (原本的 /predict 和 if __name__ == '__main__' 可以保留或刪除，它們不會影響部署)
 
