@@ -114,15 +114,18 @@ def analyze_all():
                 details = result.get('ErrorMessage') or result.get('ErrorDetails') or 'unknown'
                 return jsonify({'error': 'OCR_API_ERROR', 'details': details}), 500
 
-        full_text = f"{extracted_text.strip()} {text_input}".strip()
-        if not full_text:
-            return jsonify({'error': '未提供有效文字'}), 400
-        
-                # --- 新增: 檢查 OCR 辨識品質 ---
-        # 如果有圖片(image_file)，但辨識出的文字(extracted_text)長度少於 10 個字元，就判斷為辨識失敗
-        if image_file and len(extracted_text.strip()) < 10:
-            return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
-        # --- 新增結束 ---
+                    # --- 修改: 調整檢查順序 ---
+            # 1. 先合併所有文字
+            full_text = f"{extracted_text.strip()} {text_input}".strip()
+
+            # 2. 如果有上傳圖片，優先檢查圖片辨識品質
+            if image_file and len(extracted_text.strip()) < 10:
+                return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
+
+            # 3. 如果連手動輸入的文字都沒有，才回傳「未提供有效文字」
+            if not full_text:
+                return jsonify({'error': '未提供有效文字'}), 400
+            # --- 修改結束 ---
 
         # --- 模型融合邏輯 ---
         # 1. 取得 Scikit-learn 模型的預測結果
