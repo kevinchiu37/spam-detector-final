@@ -117,6 +117,12 @@ def analyze_all():
         full_text = f"{extracted_text.strip()} {text_input}".strip()
         if not full_text:
             return jsonify({'error': '未提供有效文字'}), 400
+        
+                # --- 新增: 檢查 OCR 辨識品質 ---
+        # 如果有圖片(image_file)，但辨識出的文字(extracted_text)長度少於 10 個字元，就判斷為辨識失敗
+        if image_file and len(extracted_text.strip()) < 10:
+            return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
+        # --- 新增結束 ---
 
         # --- 模型融合邏輯 ---
         # 1. 取得 Scikit-learn 模型的預測結果
