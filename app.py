@@ -10,117 +10,76 @@ import threading
 
 # 載入 .env 變數
 load_dotenv()
+OCR_API_KEY = os.environ.get("OCR_API_KEY")
 
 app = Flask(__name__)
 CORS(app)
 
-# --- Senior Engineer 作法: 建立一個類別來管理所有模型和預測邏輯 ---
-class SpamDetector:
-    """
-    一個封裝了 Scikit-learn 和 BERT 模型的垃圾訊息偵測器。
-    採用延遲載入 (Lazy Loading) 模式，以加速伺服器啟動。
-    """
-    def __init__(self):
-        self.sklearn_model = None
-        self.vectorizer = None
-        self.tokenizer = None
-        self.bert_model = None
-        self.models_loaded = False
-        self._lock = threading.Lock() # 執行緒鎖，確保模型只被載入一次
+# --- 模型變數初始化為 None (延遲載入) ---
+sklearn_model = None
+vectorizer = None
+tokenizer = None
+bert_model = None
+models_loaded = False
+load_lock = threading.Lock() # 執行緒鎖，確保模型只被載入一次
 
-    def _load_models(self):
-        """
-        私有方法，用於載入所有模型。
-        """
-        # 使用 with self._lock: 確保在高併發情況下，此區塊的程式碼也只會被一個執行緒執行
-        with self._lock:
-            # 雙重檢查鎖，如果模型已經被其他執行緒載入，則直接返回
-            if self.models_loaded:
-                return
+# --- 載入模型的函式 ---
+def load_models():
+    global sklearn_model, vectorizer, tokenizer, bert_model, models_loaded
+    
+    with load_lock:
+        if models_loaded:
+            return
 
-            print("🚀 偵測到首次請求，開始載入所有模型...")
-            try:
-                self.sklearn_model = joblib.load('spam_detector_model.pkl')
-                self.vectorizer = joblib.load('vectorizer.pkl')
-                print("✅ 傳統 Scikit-learn 模型載入成功")
-            except Exception as e:
-                print(f"❌ 傳統 Scikit-learn 模型載入失敗：{e}")
-
-            try:
-                BERT_MODEL_PATH = './bert_spam_model' 
-                self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
-                self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
-                print("✅ 新的 BERT 模型載入成功")
-            except Exception as e:
-                print(f"❌ BERT 模型載入失敗：{e}")
-            
-            self.models_loaded = True
-            print("👍 所有模型載入完畢！")
-
-    def _predict_with_bert(self, text):
-        """
-        私有方法，使用 BERT 進行預測。
-        """
-        if not self.tokenizer or not self.bert_model:
-            return "ham", 0.0
+        print("🚀 偵測到首次請求，開始載入所有模型...")
         try:
-            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
-            with torch.no_grad():
-                outputs = self.bert_model(**inputs)
-            
-            logits = outputs.logits
-            probabilities = torch.softmax(logits, dim=-1)
-            spam_probability = probabilities[0][1].item()
-            predicted_class_id = torch.argmax(logits, dim=-1).item()
-            return 'spam' if predicted_class_id == 1 else 'ham', spam_probability
+            sklearn_model = joblib.load('spam_detector_model.pkl')
+            vectorizer = joblib.load('vectorizer.pkl')
+            print("✅ 傳統 Scikit-learn 模型載入成功")
         except Exception as e:
-            print(f"❌ BERT 預測錯誤: {e}")
-            return "ham", 0.0
+            print(f"❌ 傳統 Scikit-learn 模型載入失敗：{e}")
 
-    def predict(self, text):
-        """
-        公開方法，執行完整的模型融合預測。
-        """
-        if not self.models_loaded:
-            self._load_models()
-        
-        # 1. Scikit-learn 模型預測
-        sklearn_score = 0.0
-        if self.sklearn_model and self.vectorizer:
-            try:
-                vec = self.vectorizer.transform([text])
-                sklearn_score = self.sklearn_model.predict_proba(vec)[0][1]
-            except Exception as e:
-                print(f"❌ SK-Learn 預測錯誤: {e}")
+        try:
+            BERT_MODEL_PATH = './bert_spam_model' 
+            tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
+            bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
+            print("✅ 新的 BERT 模型載入成功")
+        except Exception as e:
+            print(f"❌ BERT 模型載入失敗：{e}")
 
-        # 2. BERT 模型預測
-        bert_label, bert_score = self._predict_with_bert(text)
-        
-        # 3. 結合分數
-        total_score = (sklearn_score + bert_score) / 2
-        final_label = 'spam' if total_score >= 0.5 else 'ham'
-        
-        print(f"原始文字: {text[:50]}...")
-        print(f"SK-Learn Score: {sklearn_score:.4f}, BERT Score: {bert_score:.4f}, Total Score: {total_score:.4f}")
-        
-        return {
-            'final_label': final_label,
-            'text': text,
-            'total_score': round(total_score, 4)
-        }
+        models_loaded = True
+        print("👍 所有模型載入完畢！")
 
-# --- 建立 SpamDetector 的單一實例 ---
-spam_detector = SpamDetector()
-OCR_API_KEY = os.environ.get("OCR_API_KEY")
+# --- BERT 預測函式 ---
+def predict_with_bert(text):
+    if not tokenizer or not bert_model:
+        return "ham", 0.0
+    try:
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
+        with torch.no_grad():
+            outputs = bert_model(**inputs)
+        logits = outputs.logits
+        probabilities = torch.softmax(logits, dim=-1)
+        spam_probability = probabilities[0][1].item()
+        predicted_class_id = torch.argmax(logits, dim=-1).item()
+        return 'spam' if predicted_class_id == 1 else 'ham', spam_probability
+    except Exception as e:
+        print(f"❌ BERT 預測錯誤: {e}")
+        return "ham", 0.0
 
-# --- API 路由現在變得非常乾淨 ---
+# --- **最終修正版的 analyze_all API** ---
 @app.route('/analyze-all', methods=['POST'])
 def analyze_all():
+    # 首次請求時觸發模型載入
+    if not models_loaded:
+        load_models()
+
     try:
         image_file = request.files.get('image', None)
         text_input = request.form.get('text', '').strip()
         extracted_text = ''
 
+        # 步驟 1: 如果有圖片，先進行 OCR 處理
         if image_file:
             if not OCR_API_KEY:
                 return jsonify({'error': 'OCR_API_KEY_MISSING'}), 500
@@ -128,7 +87,6 @@ def analyze_all():
             ext = os.path.splitext(image_file.filename)[1].lower() or '.jpg'
             mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.bmp': 'image/bmp', '.gif': 'image/gif'}
             mime = mime_types.get(ext, 'image/jpeg')
-
             ocr_response = requests.post(
                 'https://api.ocr.space/parse/image',
                 files={'filename': ('image' + ext, image_file, mime)},
@@ -143,20 +101,38 @@ def analyze_all():
             if result.get('ParsedResults'):
                  extracted_text = result['ParsedResults'][0].get('ParsedText', '').strip()
         
+        # 步驟 2: 進行嚴謹的輸入驗證
         full_text = f"{extracted_text} {text_input}".strip()
 
+        # 情況一：有圖片但辨識不出足夠的文字
         if image_file and len(extracted_text) < 10:
             return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
+        # 情況二：沒有任何有效的文字來源
         if not full_text:
             return jsonify({'error': '未提供有效文字'}), 400
         
-        # 直接呼叫 detector 的 predict 方法
-        result = spam_detector.predict(full_text)
+        # 步驟 3: 執行模型融合分析
+        sklearn_score = 0.0
+        if sklearn_model and vectorizer:
+            vec = vectorizer.transform([full_text])
+            sklearn_score = sklearn_model.predict_proba(vec)[0][1]
+
+        bert_label, bert_score = predict_with_bert(full_text)
         
-        return jsonify(result)
+        total_score = (sklearn_score + bert_score) / 2
+        final_label = 'spam' if total_score >= 0.5 else 'ham'
+        
+        print(f"原始文字: {full_text[:50]}...")
+        print(f"SK-Learn Score: {sklearn_score:.4f}, BERT Score: {bert_score:.4f}, Total Score: {total_score:.4f}")
+        
+        return jsonify({
+            'final_label': final_label,
+            'text': full_text,
+            'total_score': round(total_score, 4)
+        })
 
     except Exception as e:
-        print(f"❌ 分析 API 發生未預期錯誤：{e}")
+        print(f"❌ 分析時發生未預期錯誤：{e}")
         return jsonify({'error': '伺服器內部錯誤，請稍後再試'}), 500
 
