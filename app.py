@@ -18,6 +18,7 @@ CORS(app)
 class SpamDetector:
     """
     一個封裝所有模型載入和預測邏輯的類別，確保執行緒安全。
+    這是更專業的作法，避免使用全域變數，並確保模型只被載入一次。
     """
     _instance = None
     _lock = threading.Lock()
@@ -73,13 +74,14 @@ class SpamDetector:
     def analyze(self, text):
         """公開方法，執行模型融合分析。"""
         with self._lock:
-            self._load_models()
+            if not self.models_loaded:
+                self._load_models()
 
-        if not self.models_loaded:
+        if not self.models_loaded or not self.sklearn_model or not self.bert_model:
              return {'error': '模型未能成功載入，無法分析'}
 
         sklearn_score = 0.0
-        if self.sklearn_model and self.vectorizer:
+        if self.vectorizer:
             vec = self.vectorizer.transform([text])
             sklearn_score = self.sklearn_model.predict_proba(vec)[0][1]
 
