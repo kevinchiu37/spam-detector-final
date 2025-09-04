@@ -81,7 +81,7 @@ class SpamDetector:
              return {'error': '模型未能成功載入，無法分析'}
 
         sklearn_score = 0.0
-        if self.vectorizer:
+        if self.vectorizer and self.sklearn_model:
             vec = self.vectorizer.transform([text])
             sklearn_score = self.sklearn_model.predict_proba(vec)[0][1]
 
