@@ -3,6 +3,8 @@ services:
     name: spam-detector-final # 您可以保留您自己的服務名稱
     env: python
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "gunicorn --worker-tmp-dir /dev/shm --workers 1 --threads 2 --timeout 120 app:detector.app"
+    # 增加了 --timeout 120，將等待時間延長到 120 秒
+    startCommand: "gunicorn --worker-tmp-dir /dev/shm --workers 1 --threads 2 --timeout 120 app:app"
     plan: free
     healthCheckPath: /
+
