@@ -1,7 +1,6 @@
+
 Flask
 flask-cors
-joblib
-scikit-learn
 requests
 python-dotenv
 transformers

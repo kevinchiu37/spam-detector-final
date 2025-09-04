@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import joblib
 import requests
 import os
 from dotenv import load_dotenv
@@ -16,101 +15,74 @@ OCR_API_KEY = os.environ.get("OCR_API_KEY")
 class SpamDetector:
     """
     一個封裝所有模型載入和預測邏輯的類別，確保執行緒安全。
-    這是我們專案的核心大腦。
+    (精簡版：專注於運行 BERT 模型)
     """
     _instance = None
     _lock = threading.Lock()
 
     def __init__(self):
-        self.sklearn_model = None
-        self.vectorizer = None
         self.tokenizer = None
         self.bert_model = None
-        self.models_loaded = False
-        print("✅ SpamDetector 實例已建立，模型將在首次請求時載入。")
+        self.model_loaded = False
+        print("✅ SpamDetector 實例已建立，BERT 模型將在首次請求時載入。")
 
-    def _load_models(self):
+    def _load_model(self):
         """私有方法，只在需要時載入模型，並確保只執行一次。"""
-        if self.models_loaded:
+        if self.model_loaded:
             return
         
         start_time = time.time()
-        print("🚀 偵測到首次請求，開始載入所有模型...")
+        print("🚀 偵測到首次請求，開始載入 BERT 模型...")
         
-        try:
-            self.sklearn_model = joblib.load('spam_detector_model.pkl')
-            self.vectorizer = joblib.load('vectorizer.pkl')
-            print("✅ 傳統 Scikit-learn 模型載入成功")
-        except Exception as e:
-            print(f"❌ 傳統 Scikit-learn 模型或向量器載入失敗：{e}")
-
         try:
             BERT_MODEL_PATH = './bert_spam_model' 
             self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
             self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
-            print("✅ 新的 BERT 模型載入成功")
+            self.model_loaded = True
+            print("✅ BERT 模型載入成功")
         except Exception as e:
             print(f"❌ BERT 模型載入失敗：{e}")
 
-        self.models_loaded = True
         end_time = time.time()
-        print(f"👍 所有模型載入完畢！耗時: {end_time - start_time:.2f} 秒")
+        print(f"👍 模型載入完畢！耗時: {end_time - start_time:.2f} 秒")
 
-    def _predict_with_bert(self, text):
-        """使用 BERT 模型進行預測。"""
-        if not self.tokenizer or not self.bert_model:
-            return "ham", 0.0
+    def analyze(self, text):
+        """公開方法，執行模型分析。"""
+        with self._lock:
+            # 確保模型只會被安全地載入一次
+            self._load_model()
+
+        if not self.model_loaded or not self.bert_model:
+             return {'error': '模型未能成功載入，無法分析'}
+
         try:
             inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
             with torch.no_grad():
                 outputs = self.bert_model(**inputs)
+            
             logits = outputs.logits
             probabilities = torch.softmax(logits, dim=-1)
-            spam_probability = probabilities[0][1].item()
-            predicted_class_id = torch.argmax(logits, dim=-1).item()
-            return 'spam' if predicted_class_id == 1 else 'ham', spam_probability
+            spam_score = probabilities[0][1].item()
+            
+            final_label = 'spam' if spam_score >= 0.5 else 'ham'
+            
+            print(f"原始文字: {text[:50]}...")
+            print(f"BERT Score: {spam_score:.4f}")
+            
+            return {
+                'final_label': final_label,
+                'text': text,
+                'total_score': round(spam_score, 4)
+            }
         except Exception as e:
             print(f"❌ BERT 預測錯誤: {e}")
-            return "ham", 0.0
-
-    def analyze(self, text):
-        """公開方法，執行模型融合分析。"""
-        with self._lock:
-            # 確保模型只會被安全地載入一次
-            self._load_models()
-
-        if not self.models_loaded or not self.sklearn_model or not self.bert_model:
-             return {'error': '模型未能成功載入，無法分析'}
-
-        sklearn_score = 0.0
-        if self.vectorizer and self.sklearn_model:
-            vec = self.vectorizer.transform([text])
-            sklearn_score = self.sklearn_model.predict_proba(vec)[0][1]
-
-        bert_label, bert_score = self._predict_with_bert(text)
-        
-        total_score = (sklearn_score + bert_score) / 2
-        final_label = 'spam' if total_score >= 0.5 else 'ham'
-        
-        print(f"原始文字: {text[:50]}...")
-        print(f"SK-Learn Score: {sklearn_score:.4f}, BERT Score: {bert_score:.4f}, Total Score: {total_score:.4f}")
-        
-        return {
-            'final_label': final_label,
-            'text': text,
-            'total_score': round(total_score, 4)
-        }
+            return {'error': 'BERT 模型預測時發生錯誤'}
 
 # ------------------- 主程式入口 -------------------
-
-# 1. 建立一個 Gunicorn 可以找到的、全域的 Flask app 實例
 app = Flask(__name__)
 CORS(app)
-
-# 2. 建立一個 SpamDetector 的單一實例，管理所有模型
 detector_instance = SpamDetector()
 
-# 3. 定義 API 路由 (Routes)
 @app.route('/', methods=['GET'])
 def health_check():
     """一個簡單的健康檢查路由，讓 Render 知道服務已啟動。"""
@@ -153,7 +125,6 @@ def analyze_all():
         if not full_text: 
             return jsonify({'error': '未提供有效文字'}), 400
         
-        # 呼叫 detector 實例進行分析
         analysis_result = detector_instance.analyze(full_text)
         
         if 'error' in analysis_result:
