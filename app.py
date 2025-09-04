@@ -7,18 +7,16 @@ from dotenv import load_dotenv
 from transformers import BertTokenizer, BertForSequenceClassification
 import torch
 import threading
+import time
 
 # 載入 .env 變數
 load_dotenv()
 OCR_API_KEY = os.environ.get("OCR_API_KEY")
 
-app = Flask(__name__)
-CORS(app)
-
 class SpamDetector:
     """
     一個封裝所有模型載入和預測邏輯的類別，確保執行緒安全。
-    這是更專業的作法，避免使用全域變數，並確保模型只被載入一次。
+    這是我們專案的核心大腦。
     """
     _instance = None
     _lock = threading.Lock()
@@ -29,12 +27,14 @@ class SpamDetector:
         self.tokenizer = None
         self.bert_model = None
         self.models_loaded = False
+        print("✅ SpamDetector 實例已建立，模型將在首次請求時載入。")
 
     def _load_models(self):
-        """私有方法，只在需要時載入模型。"""
+        """私有方法，只在需要時載入模型，並確保只執行一次。"""
         if self.models_loaded:
             return
-
+        
+        start_time = time.time()
         print("🚀 偵測到首次請求，開始載入所有模型...")
         
         try:
@@ -53,9 +53,11 @@ class SpamDetector:
             print(f"❌ BERT 模型載入失敗：{e}")
 
         self.models_loaded = True
-        print("👍 所有模型載入完畢！")
+        end_time = time.time()
+        print(f"👍 所有模型載入完畢！耗時: {end_time - start_time:.2f} 秒")
 
     def _predict_with_bert(self, text):
+        """使用 BERT 模型進行預測。"""
         if not self.tokenizer or not self.bert_model:
             return "ham", 0.0
         try:
@@ -74,8 +76,8 @@ class SpamDetector:
     def analyze(self, text):
         """公開方法，執行模型融合分析。"""
         with self._lock:
-            if not self.models_loaded:
-                self._load_models()
+            # 確保模型只會被安全地載入一次
+            self._load_models()
 
         if not self.models_loaded or not self.sklearn_model or not self.bert_model:
              return {'error': '模型未能成功載入，無法分析'}
@@ -99,17 +101,29 @@ class SpamDetector:
             'total_score': round(total_score, 4)
         }
 
-# 建立一個全域的 SpamDetector 實例
-detector = SpamDetector()
+# ------------------- 主程式入口 -------------------
+
+# 1. 建立一個 Gunicorn 可以找到的、全域的 Flask app 實例
+app = Flask(__name__)
+CORS(app)
+
+# 2. 建立一個 SpamDetector 的單一實例，管理所有模型
+detector_instance = SpamDetector()
+
+# 3. 定義 API 路由 (Routes)
+@app.route('/', methods=['GET'])
+def health_check():
+    """一個簡單的健康檢查路由，讓 Render 知道服務已啟動。"""
+    return "OK", 200
 
 @app.route('/analyze-all', methods=['POST'])
 def analyze_all():
+    """接收請求，並呼叫 detector 實例進行分析。"""
     try:
         image_file = request.files.get('image', None)
         text_input = request.form.get('text', '').strip()
         extracted_text = ''
 
-        # 步驟 1: 如果有圖片，先進行 OCR 處理
         if image_file:
             if not OCR_API_KEY:
                 return jsonify({'error': 'OCR_API_KEY_MISSING'}), 500
@@ -131,19 +145,16 @@ def analyze_all():
             if result.get('ParsedResults'):
                  extracted_text = result['ParsedResults'][0].get('ParsedText', '').strip()
         
-        # 步驟 2: 進行嚴謹的輸入驗證
         full_text = f"{extracted_text} {text_input}".strip()
 
-        # 情況一：有圖片但辨識不出足夠的文字
         if image_file and len(extracted_text) < 10:
             return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
 
-        # 情況二：沒有任何有效文字
-        if not full_text:
+        if not full_text: 
             return jsonify({'error': '未提供有效文字'}), 400
         
-        # 步驟 3: 呼叫 detector 進行分析
-        analysis_result = detector.analyze(full_text)
+        # 呼叫 detector 實例進行分析
+        analysis_result = detector_instance.analyze(full_text)
         
         if 'error' in analysis_result:
             return jsonify(analysis_result), 500
