@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>詐騙檢測</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="m-0 p-0 bg-gray-100">
+  <div class="flex flex-col md:flex-row h-screen">
+    <!-- 側邊欄：手機時為上方，桌機時為左側 -->
+    <nav class="bg-white md:bg-gray-100 shadow-md md:shadow-none md:fixed md:h-full w-full md:w-[250px] p-5 z-20 flex flex-row md:flex-col items-center md:items-stretch gap-3 md:gap-0">
+      <button id="home-btn"
+        class="mb-0 md:mb-4 bg-gray-800 text-white w-10 h-10 rounded-full shadow flex items-center justify-center hover:bg-gray-700"
+        aria-label="回到首頁">
+        <!-- Home icon -->
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+        </svg>
+      </button>
+      <div class="flex-1 md:flex-none flex flex-col md:block items-center md:items-stretch w-full">
+        <h3 class="text-lg md:text-xl font-semibold mb-2 md:mb-4 text-center md:text-left">歷史紀錄</h3>
+        <ul id="history-list" class="space-y-2 max-h-[180px] md:max-h-full overflow-y-auto w-full"></ul>
+      </div>
+    </nav>
+
+    <!-- 右側內容（主內容區） -->
+    <main class="flex-1 flex flex-col items-center justify-center ml-0 md:ml-[250px] w-full md:w-[calc(100%-250px)] relative px-2 md:px-4 bg-cover bg-center h-screen overflow-y-auto"
+         style="background-image:url('https://newscrewdriver.files.wordpress.com/2018/10/poptartcat320240.gif')">
+
+      <!-- 背景遮罩 -->
+      <div class="fixed inset-0 md:left-[250px] w-full md:w-[calc(100%-250px)] h-full z-0 pointer-events-none">
+        <div class="w-full h-full bg-black bg-opacity-40 backdrop-blur-md"></div>
+      </div>
+
+      <!-- 對話與輸入 -->
+      <section class="relative z-10 w-full max-w-lg mx-auto pt-6 md:pt-[100px] pb-10 flex flex-col space-y-6">
+        <div id="chat-container"
+             class="hidden flex flex-col space-y-4 overflow-y-auto bg-white/80 backdrop-blur-md rounded-2xl shadow p-4 max-h-[60vh]">
+        </div>
+
+        <div id="input-section-wrapper"
+             class="bg-white/80 backdrop-blur-md rounded-2xl shadow px-2 py-3 md:px-4 flex flex-col space-y-3">
+          <div class="text-2xl md:text-4xl font-bold text-center mb-4">請上傳圖片或連結</div>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input id="chat-input" type="text" placeholder="輸入訊息..."
+                   class="flex-grow border border-gray-300 rounded-lg px-3 py-2 text-base md:text-lg focus:outline-none" />
+            <input id="image-input" type="file" accept="image/*" class="hidden" />
+            <label for="image-input"
+                   class="bg-gray-200 text-gray-700 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-300 text-center">上傳圖片</label>
+            <button id="send-btn"
+                    class="bg-black text-white rounded-lg px-4 py-2 hover:opacity-90">輸出</button>
+          </div>
+          <div id="image-preview" class="flex flex-wrap gap-2"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 儲存按鈕 -->
+  <button id="save-btn"
+          class="fixed bottom-5 right-5 bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg hidden hover:bg-blue-700"
+          aria-label="儲存進歷史紀錄">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+         stroke="currentColor" class="w-8 h-8">
+      <path stroke-linecap="round" stroke-linejoin="round"
+            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  </button>
+
+
+   
+<script>
+    const API_BASE = 'https://spam-detector-final.onrender.com/'; // 請再次確認這是您最新的 Render 服務網址
+
+    const sendBtn = document.getElementById('send-btn');
+    const saveBtn = document.getElementById('save-btn');
+    const chatInput = document.getElementById('chat-input');
+    const imageInput = document.getElementById('image-input');
+    const imagePreview = document.getElementById('image-preview');
+    const chatContainer = document.getElementById('chat-container');
+    const historyList = document.getElementById('history-list');
+    const inputSection = document.getElementById('input-section-wrapper');
+    const homeBtn = document.getElementById('home-btn');
+
+    let lastContent = null;
+    const historyData = [];
+
+    // --- 新增: 用於存放壓縮後的圖片檔案 ---
+    let compressedFile = null;
+    // ------------------------------------
+
+    // --- 修改: imageInput 的事件監聽器，加入壓縮邏輯 ---
+    imageInput.addEventListener('change', (event) => {
+      imagePreview.innerHTML = '';
+      compressedFile = null; // 每次選擇新檔案時，都先清空舊的壓縮檔
+
+      const file = event.target.files[0];
+      if (!file) return;
+
+      // --- 圖片壓縮核心邏輯 ---
+      const MAX_WIDTH = 1200; // 設定圖片的最大寬度，超過就會被等比例縮小
+      const QUALITY = 0.8;    // 設定圖片的輸出品質 (0.8 代表 80%)
+
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = document.createElement('img');
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(blob => {
+            compressedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            });
+
+            console.log(`Original size: ${(file.size / 1024).toFixed(2)} KB`);
+            console.log(`Compressed size: ${(compressedFile.size / 1024).toFixed(2)} KB`);
+
+            const previewImg = document.createElement('img');
+            previewImg.src = URL.createObjectURL(compressedFile);
+            previewImg.className = 'max-w-xs rounded border p-2';
+            imagePreview.appendChild(previewImg);
+
+          }, 'image/jpeg', QUALITY);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    // --- 修改結束 ---
+
+
+    // --- 修改: sendBtn 的事件監聽器，改為使用壓縮後的檔案 ---
+    sendBtn.addEventListener('click', async () => {
+      const message = chatInput.value.trim();
+      const file = compressedFile; // 將 file 的來源從原始檔案改為壓縮後的檔案
+
+      if (!message && !file) {
+        alert("請輸入文字或上傳圖片");
+        return;
+      }
+
+      chatContainer.style.display = 'flex';
+      
+      if (file) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.className = 'self-end max-w-[200px] rounded-xl shadow border';
+        chatContainer.appendChild(img);
+      }
+      if (message) {
+        const userBubble = document.createElement('div');
+        userBubble.className = 'self-end bg-blue-600 text-white p-3 rounded-xl max-w-[70%] shadow';
+        userBubble.textContent = message;
+        chatContainer.appendChild(userBubble);
+      }
+
+      const aiBubble = document.createElement('div');
+      aiBubble.className = 'self-start bg-white text-black p-3 rounded-xl max-w-[70%] shadow';
+      aiBubble.textContent = '正在分析中...';
+      chatContainer.appendChild(aiBubble);
+
+      try {
+        const formData = new FormData();
+        if (file) formData.append('image', file);
+        formData.append('text', message);
+
+        const res = await fetch(`${API_BASE}/analyze-all`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+
+        if (data.error) {
+           if (data.error === 'OCR_API_ERROR' && data.details) {
+            aiBubble.textContent = `❌ 圖片辨識錯誤：${data.details}`;
+          } else if (data.error === 'OCR_API_KEY_MISSING') {
+            aiBubble.textContent = '❌ 錯誤：伺服器缺少 OCR API 金鑰';
+          } else {
+            aiBubble.textContent = `❌ 錯誤：${data.error}`;
+          }
+        } else {
+          aiBubble.textContent = `分析結果：${data.final_label}（score: ${data.total_score}）`;
+        }
+
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            lastContent = {
+              message: message || null,
+              image: e.target.result
+            };
+            saveBtn.style.display = 'block';
+          };
+          reader.readAsDataURL(file);
+        } else {
+          lastContent = {
+            message: message || null,
+            image: null
+          };
+          saveBtn.style.display = 'block';
+        }
+      } catch (err) {
+        aiBubble.textContent = "分析失敗，請稍後再試";
+        console.error(err);
+      }
+
+      chatInput.value = '';
+      imageInput.value = '';
+      imagePreview.innerHTML = '';
+      compressedFile = null; // 清空已上傳的檔案
+    });
+
+    saveBtn.addEventListener('click', () => {
+      if (!lastContent) return;
+
+      if (historyData.length >= 20) {
+        historyData.pop();
+        historyList.removeChild(historyList.lastChild);
+      }
+
+      const copy = { ...lastContent };
+      historyData.unshift(copy);
+
+      const item = document.createElement('div');
+      item.className = 'flex justify-between items-center bg-white px-2 py-1 rounded hover:bg-gray-100';
+
+      const label = document.createElement('span');
+      label.className = 'text-gray-700 text-sm cursor-pointer hover:underline flex-1';
+      label.textContent = copy.message
+        ? (copy.message.length > 8 ? copy.message.slice(0, 8) + '...' : copy.message)
+        : `圖片訊息 (${new Date().toLocaleTimeString()})`;
+      label.onclick = () => {
+        restoreHistory(copy);
+        inputSection.style.display = 'none';
+      };
+
+      const del = document.createElement('button');
+      del.textContent = '❌';
+      del.className = 'ml-2 text-red-500 hover:text-red-700 text-sm';
+      del.onclick = () => {
+        const idx = historyData.indexOf(copy);
+        if (idx > -1) historyData.splice(idx, 1);
+        historyList.removeChild(item);
+      };
+
+      item.append(label, del);
+      historyList.prepend(item);
+      saveBtn.classList.add('hidden');
+    });
+
+    function restoreHistory(c) {
+      chatContainer.innerHTML = '';
+      chatContainer.classList.remove('hidden');
+
+      if (c.image) {
+        const img = document.createElement('img');
+        img.src = c.image;
+        img.className = 'self-end max-w-[200px] rounded-xl shadow border';
+        chatContainer.appendChild(img);
+      }
+      if (c.message) {
+        const user = document.createElement('div');
+        user.textContent = c.message;
+        user.className = 'self-end bg-blue-600 text-white p-3 rounded-xl max-w-[70%] shadow';
+        chatContainer.appendChild(user);
+      }
+
+      const ai = document.createElement('div');
+      ai.textContent = '（歷史紀錄）分析結果';
+      ai.className = 'self-start bg-white text-black p-3 rounded-xl max-w-[70%] shadow';
+      chatContainer.appendChild(ai);
+    }
+
+    homeBtn.onclick = () => {
+      chatContainer.innerHTML = '';
+      chatContainer.classList.add('hidden');
+      inputSection.style.display = 'flex';
+      saveBtn.classList.add('hidden');
+    };
+  </script>
+</body>
+</html>

@@ -1,7 +1,10 @@
 services:
   - type: web
-    name: spam-api
+    name: spam-detector-final # 您可以保留您自己的服務名稱
     env: python
-    buildCommand: ""
-    startCommand: "python app.py"
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    # 增加了 --timeout 120，將等待時間延長到 120 秒
+    startCommand: "gunicorn --worker-tmp-dir /dev/shm --workers 1 --threads 2 --timeout 120 app:app"
     plan: free
+    healthCheckPath: /
+

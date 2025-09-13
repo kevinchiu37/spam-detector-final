@@ -1,11 +1,11 @@
 {
-  "_name_or_path": "ckiplab/bert-base-chinese",
   "architectures": [
     "BertForSequenceClassification"
   ],
   "attention_probs_dropout_prob": 0.1,
   "classifier_dropout": null,
   "directionality": "bidi",
+  "dtype": "float32",
   "gradient_checkpointing": false,
   "hidden_act": "gelu",
   "hidden_dropout_prob": 0.1,
@@ -26,8 +26,7 @@
   "position_embedding_type": "absolute",
   "problem_type": "single_label_classification",
   "tokenizer_class": "BertTokenizerFast",
-  "torch_dtype": "float32",
-  "transformers_version": "4.40.2",
+  "transformers_version": "4.56.0",
   "type_vocab_size": 2,
   "use_cache": true,
   "vocab_size": 21128

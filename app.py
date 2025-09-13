@@ -1,94 +1,96 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import joblib
 import requests
 import os
 from dotenv import load_dotenv
-
-# --- 新增: 為了載入 BERT 模型 ---
 from transformers import BertTokenizer, BertForSequenceClassification
 import torch
-# ------------------------------------
+import threading
+import time
 
 # 載入 .env 變數
 load_dotenv()
 OCR_API_KEY = os.environ.get("OCR_API_KEY")
-if not OCR_API_KEY:
-    print("⚠️ 未設定 OCR_API_KEY，圖片辨識功能將無法使用")
 
+class SpamDetector:
+    """
+    一個封裝所有模型載入和預測邏輯的類別，確保執行緒安全。
+    (精簡版：專注於運行 BERT 模型)
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self.tokenizer = None
+        self.bert_model = None
+        self.model_loaded = False
+        print("✅ SpamDetector 實例已建立，BERT 模型將在首次請求時載入。")
+
+    def _load_model(self):
+        """私有方法，只在需要時載入模型，並確保只執行一次。"""
+        if self.model_loaded:
+            return
+        
+        start_time = time.time()
+        print("🚀 偵測到首次請求，開始載入 BERT 模型...")
+        
+        try:
+            BERT_MODEL_PATH = './new_bert_scam_model' 
+            self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
+            self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
+            self.model_loaded = True
+            print("✅ BERT 模型載入成功")
+        except Exception as e:
+            print(f"❌ BERT 模型載入失敗：{e}")
+
+        end_time = time.time()
+        print(f"👍 模型載入完畢！耗時: {end_time - start_time:.2f} 秒")
+
+    def analyze(self, text):
+        """公開方法，執行模型分析。"""
+        with self._lock:
+            # 確保模型只會被安全地載入一次
+            self._load_model()
+
+        if not self.model_loaded or not self.bert_model:
+             return {'error': '模型未能成功載入，無法分析'}
+
+        try:
+            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
+            with torch.no_grad():
+                outputs = self.bert_model(**inputs)
+            
+            logits = outputs.logits
+            probabilities = torch.softmax(logits, dim=-1)
+            spam_score = probabilities[0][1].item()
+            
+            final_label = 'spam' if spam_score >= 0.5 else 'ham'
+            
+            print(f"原始文字: {text[:50]}...")
+            print(f"BERT Score: {spam_score:.4f}")
+            
+            return {
+                'final_label': final_label,
+                'text': text,
+                'total_score': round(spam_score, 4)
+            }
+        except Exception as e:
+            print(f"❌ BERT 預測錯誤: {e}")
+            return {'error': 'BERT 模型預測時發生錯誤'}
+
+# ------------------- 主程式入口 -------------------
 app = Flask(__name__)
 CORS(app)
+detector_instance = SpamDetector()
 
-# --- 修改: 載入所有模型 ---
-# 傳統模型 (Scikit-learn)
-try:
-    sklearn_model = joblib.load('spam_detector_model.pkl')
-    vectorizer = joblib.load('vectorizer.pkl')
-    print("✅ 傳統 Scikit-learn 模型載入成功")
-except Exception as e:
-    print(f"❌ 傳統 Scikit-learn 模型或向量器載入失敗：{e}")
-    sklearn_model = None
-    vectorizer = None
+@app.route('/', methods=['GET'])
+def health_check():
+    """一個簡單的健康檢查路由，讓 Render 知道服務已啟動。"""
+    return "OK", 200
 
-# 新的 BERT 模型
-try:
-    # BERT 模型檔案所在的資料夾名稱
-    BERT_MODEL_PATH = './bert_spam_model' 
-    tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
-    bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
-    print("✅ 新的 BERT 模型載入成功")
-except Exception as e:
-    print(f"❌ BERT 模型載入失敗：{e}")
-    tokenizer = None
-    bert_model = None
-# ------------------------------------
-
-# --- 新增: 獨立的 BERT 預測函式 ---
-def predict_with_bert(text):
-    if not tokenizer or not bert_model:
-        return None, 0.0
-
-    try:
-        # 1. 將文字進行 Tokenize (分詞)
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
-        
-        # 2. 進行預測
-        with torch.no_grad(): # 在推論模式下不計算梯度，以節省資源
-            outputs = bert_model(**inputs)
-        
-        # 3. 取得預測結果
-        logits = outputs.logits
-        probabilities = torch.softmax(logits, dim=-1)
-        
-        # 假設: 標籤 0 是 'ham', 標籤 1 是 'spam'
-        spam_probability = probabilities[0][1].item()
-        predicted_class_id = torch.argmax(logits, dim=-1).item()
-        
-        return 'spam' if predicted_class_id == 1 else 'ham', spam_probability
-    except Exception as e:
-        print(f"❌ BERT 預測錯誤: {e}")
-        return None, 0.0
-# ------------------------------------
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    try:
-        data = request.json or {}
-        text = data.get('text', '').strip()
-        if not text:
-            return jsonify({'error': '請提供 text 欄位'}), 400
-
-        vec = vectorizer.transform([text])
-        pred = sklearn_model.predict(vec)[0]
-        return jsonify({'label': 'spam' if pred == 1 else 'ham'})
-
-    except Exception as e:
-        print(f"❌ 預測錯誤：{e}")
-        return jsonify({'error': str(e)}), 500
-
-# --- 修改: `/analyze-all` API 以融合兩種模型 ---
 @app.route('/analyze-all', methods=['POST'])
 def analyze_all():
+    """接收請求，並呼叫 detector 實例進行分析。"""
     try:
         image_file = request.files.get('image', None)
         text_input = request.form.get('text', '').strip()
@@ -101,52 +103,36 @@ def analyze_all():
             ext = os.path.splitext(image_file.filename)[1].lower() or '.jpg'
             mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.bmp': 'image/bmp', '.gif': 'image/gif'}
             mime = mime_types.get(ext, 'image/jpeg')
-
             ocr_response = requests.post(
                 'https://api.ocr.space/parse/image',
                 files={'filename': ('image' + ext, image_file, mime)},
                 data={'apikey': OCR_API_KEY, 'language': 'cht'}
             )
             result = ocr_response.json()
-            if not result.get('IsErroredOnProcessing'):
-                extracted_text = result['ParsedResults'][0].get('ParsedText', '')
-            else:
+            
+            if result.get('IsErroredOnProcessing'):
                 details = result.get('ErrorMessage') or result.get('ErrorDetails') or 'unknown'
                 return jsonify({'error': 'OCR_API_ERROR', 'details': details}), 500
+            
+            if result.get('ParsedResults'):
+                 extracted_text = result['ParsedResults'][0].get('ParsedText', '').strip()
+        
+        full_text = f"{extracted_text} {text_input}".strip()
 
-        full_text = f"{extracted_text.strip()} {text_input}".strip()
-        if not full_text:
+        if image_file and len(extracted_text) < 10:
+            return jsonify({'error': '圖片辨識不清，請重新上傳更清晰的圖片'}), 400
+
+        if not full_text: 
             return jsonify({'error': '未提供有效文字'}), 400
-
-        # --- 模型融合邏輯 ---
-        # 1. 取得 Scikit-learn 模型的預測結果
-        sklearn_score = 0.0
-        if sklearn_model and vectorizer:
-            vec = vectorizer.transform([full_text])
-            sklearn_score = sklearn_model.predict_proba(vec)[0][1]
-
-        # 2. 取得 BERT 模型的預測結果
-        bert_label, bert_score = predict_with_bert(full_text)
         
-        # 3. 結合分數 (你可以調整權重，這裡使用簡單平均法)
-        total_score = (sklearn_score + bert_score) / 2
+        analysis_result = detector_instance.analyze(full_text)
         
-        # 4. 根據最終分數決定標籤 (以 0.5 為分界)
-        final_label = 'spam' if total_score >= 0.5 else 'ham'
-        
-        print(f"原始文字: {full_text[:50]}...")
-        print(f"SK-Learn Score: {sklearn_score:.4f}, BERT Score: {bert_score:.4f}, Total Score: {total_score:.4f}")
-        # ----------------------
+        if 'error' in analysis_result:
+            return jsonify(analysis_result), 500
 
-        return jsonify({
-            'final_label': final_label,
-            'text': full_text,
-            'total_score': round(total_score, 4)
-        })
+        return jsonify(analysis_result)
 
     except Exception as e:
-        print(f"❌ 分析時錯誤：{e}")
+        print(f"❌ 分析時發生未預期錯誤：{e}")
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
