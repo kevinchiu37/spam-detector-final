@@ -1,10 +1,7 @@
-Flask
+flask
 flask-cors
 requests
+python-dotenv
 transformers
 torch
-joblib
-scikit-learn
-requests
-python-dotenv
 gunicorn
