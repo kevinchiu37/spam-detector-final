@@ -34,7 +34,6 @@ class SpamDetector:
         print("🚀 偵測到首次請求，開始載入 BERT 模型...")
         
         try:
-            # 我們使用 new_bert_scam_model
             BERT_MODEL_PATH = './new_bert_scam_model' 
             self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
             self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
@@ -49,7 +48,6 @@ class SpamDetector:
     def analyze(self, text):
         """公開方法，執行模型分析。"""
         with self._lock:
-            # 確保模型只會被安全地載入一次
             self._load_model()
 
         if not self.model_loaded or not self.bert_model:
@@ -64,22 +62,17 @@ class SpamDetector:
             probabilities = torch.softmax(logits, dim=-1)
             spam_score = probabilities[0][1].item()
             
-            # 將分數轉換為百分比字串
             confidence_percentage = f"{spam_score * 100:.1f}%"
     
-            # 根據是否為詐騙，決定要回傳的 JSON 內容
             if spam_score >= 0.5:
-                # 詐騙訊息的 output 格式
                 display_text = f"經偵測後發現您的訊息有 {confidence_percentage} 為詐騙，請撥打165反詐騙專線。"
                 is_scam = True
             else:
-                # 非詐騙訊息的 output 格式
                 display_text = f"經偵測後，此訊息為詐騙的可能性為 {confidence_percentage}，風險較低。"
                 is_scam = False
 
             print(f"最終輸出文字: {display_text}")
 
-            # 回傳最終的 JSON 結果
             return {
                 "display_text": display_text,
                 "is_scam": is_scam,
@@ -87,7 +80,6 @@ class SpamDetector:
                 "raw_score": round(spam_score, 4),
                 "original_text": text
             }
-
         except Exception as e:
             print(f"❌ BERT 預測錯誤: {e}")
             return {'error': 'BERT 模型預測時發生錯誤'}
@@ -99,12 +91,10 @@ detector_instance = SpamDetector()
 
 @app.route('/', methods=['GET'])
 def health_check():
-    """一個簡單的健康檢查路由，讓 Render 知道服務已啟動。"""
     return "OK", 200
 
 @app.route('/analyze-all', methods=['POST'])
 def analyze_all():
-    """接收請求，並呼叫 detector 實例進行分析。"""
     try:
         image_file = request.files.get('image', None)
         text_input = request.form.get('text', '').strip()
