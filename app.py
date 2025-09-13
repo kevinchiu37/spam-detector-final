@@ -11,6 +11,7 @@ import time
 # 載入 .env 變數
 load_dotenv()
 OCR_API_KEY = os.environ.get("OCR_API_KEY")
+BERT_MODEL_PATH = os.environ.get("BERT_MODEL_PATH", "./bert_scam_model")
 
 class SpamDetector:
     """
@@ -32,9 +33,8 @@ class SpamDetector:
         
         start_time = time.time()
         print("🚀 偵測到首次請求，開始載入 BERT 模型...")
-        
+
         try:
-            BERT_MODEL_PATH = './new_bert_scam_model' 
             self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
             self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
             self.model_loaded = True
