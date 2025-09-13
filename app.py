@@ -15,7 +15,6 @@ OCR_API_KEY = os.environ.get("OCR_API_KEY")
 class SpamDetector:
     """
     一個封裝所有模型載入和預測邏輯的類別，確保執行緒安全。
-    (精簡版：專注於運行 BERT 模型)
     """
     _instance = None
     _lock = threading.Lock()
@@ -35,6 +34,7 @@ class SpamDetector:
         print("🚀 偵測到首次請求，開始載入 BERT 模型...")
         
         try:
+            # 我們使用 new_bert_scam_model
             BERT_MODEL_PATH = './new_bert_scam_model' 
             self.tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_PATH)
             self.bert_model = BertForSequenceClassification.from_pretrained(BERT_MODEL_PATH)
@@ -64,16 +64,30 @@ class SpamDetector:
             probabilities = torch.softmax(logits, dim=-1)
             spam_score = probabilities[0][1].item()
             
-            final_label = 'spam' if spam_score >= 0.5 else 'ham'
-            
-            print(f"原始文字: {text[:50]}...")
-            print(f"BERT Score: {spam_score:.4f}")
-            
+            # 將分數轉換為百分比字串
+            confidence_percentage = f"{spam_score * 100:.1f}%"
+    
+            # 根據是否為詐騙，決定要回傳的 JSON 內容
+            if spam_score >= 0.5:
+                # 詐騙訊息的 output 格式
+                display_text = f"經偵測後發現您的訊息有 {confidence_percentage} 為詐騙，請撥打165反詐騙專線。"
+                is_scam = True
+            else:
+                # 非詐騙訊息的 output 格式
+                display_text = f"經偵測後，此訊息為詐騙的可能性為 {confidence_percentage}，風險較低。"
+                is_scam = False
+
+            print(f"最終輸出文字: {display_text}")
+
+            # 回傳最終的 JSON 結果
             return {
-                'final_label': final_label,
-                'text': text,
-                'total_score': round(spam_score, 4)
+                "display_text": display_text,
+                "is_scam": is_scam,
+                "confidence_percentage": confidence_percentage,
+                "raw_score": round(spam_score, 4),
+                "original_text": text
             }
+
         except Exception as e:
             print(f"❌ BERT 預測錯誤: {e}")
             return {'error': 'BERT 模型預測時發生錯誤'}
@@ -135,4 +149,3 @@ def analyze_all():
     except Exception as e:
         print(f"❌ 分析時發生未預期錯誤：{e}")
         return jsonify({'error': str(e)}), 500
-
