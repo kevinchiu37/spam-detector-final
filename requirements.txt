@@ -8,5 +8,5 @@ requests==2.32.3
 
 transformers==4.44.2
 huggingface-hub==0.24.5
-safetensors==0.4.3
+safetensors==0.4.5
 torch==2.4.1
