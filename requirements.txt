@@ -1,5 +1,8 @@
 Flask
 flask-cors
+requests
+transformers
+torch
 joblib
 scikit-learn
 requests
