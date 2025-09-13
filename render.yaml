@@ -1,10 +1,19 @@
 services:
   - type: web
-    name: spam-detector-final # 您可以保留您自己的服務名稱
+    name: spam-detector-final
     env: python
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    # 增加了 --timeout 120，將等待時間延長到 120 秒
-    startCommand: "gunicorn --worker-tmp-dir /dev/shm --workers 1 --threads 2 --timeout 120 app:app"
     plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-tmp-dir /dev/shm --bind 0.0.0.0:$PORT paa:app
     healthCheckPath: /
-
+    autoDeploy: true
+    envVars:
+      - key: OCR_API_KEY     # 有用 OCR 再填
+        sync: false
+      - key: HF_REPO         # 走 Hugging Face 後備才填，如 yourname/new-bert-scam-model
+        sync: false
+      - key: HF_TOKEN        # HF 私有倉庫才需要
+        sync: false
+      - key: PIP_ONLY_BINARY # 可選：避免原地編譯，讓 build 更穩
+        value: "safetensors"
